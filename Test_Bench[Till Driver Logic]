@@ -1,0 +1,246 @@
+////////////////////////////
+interface apb_if;
+  
+    logic  pclk;
+    logic psel;
+    logic presetn;
+    logic penable;
+    logic [31:0]pwdata;               
+    logic pwrite;                     
+    logic [31:0] paddr;
+    logic pready,pslverr;
+    logic [31:0] prdata;
+ 
+endinterface
+//////////////////////////////
+class transaction;
+  
+  typedef enum int { write=0,
+  					 read=1,
+					 random=2,
+                     error=3
+                   } opr_type;
+   
+  rand opr_type opr;
+  rand bit [31:0] pwdata;
+  rand bit [31:0] paddr;
+  rand bit psel;
+  rand bit penable;
+  rand bit pwrite;
+  rand bit pslverr;
+  bit [31:0] prdata;
+  bit pready;
+  
+  constraint my_add 
+  {paddr > 1 ;paddr<5;}
+  
+  constraint my_datac
+  {pwdata >1 ; pwdata <10;}
+  
+  //Making function for DISPLAY argument as string type
+  function void display(input string tag);
+    $display("[%0s] op:%0s  paddr:%0d pwdata:%0d psel:%0b penable:%0b pwrite:%0b prdata:%0d pready:%0b pslverr:%0b",tag,opr.name,paddr,pwdata,psel,penable,pwrite,prdata,pready,pslverr);
+  endfunction
+  
+  //Making Deep function
+  function transaction copy();
+    copy=new();
+    copy.opr=this.opr;
+    copy.pwdata=this.pwdata;
+    copy.paddr=this.paddr;
+    copy.psel=this.psel;
+    copy.penable=this.penable;
+    copy.pwrite=this.pwrite;
+    copy.pslverr=this.pslverr;
+    copy.prdata=this.prdata;
+    copy.pready=this.pready;
+  endfunction
+endclass
+//////////////////////////////////
+
+class generator;
+  transaction tr;
+  mailbox#(transaction) mbx;
+  int count;
+  event done;
+  event nextdrv;
+  
+  function new(mailbox #(transaction) mbx);
+    this.mbx=mbx;
+    tr=new();
+  endfunction
+  
+  task run();
+    repeat (count)
+      begin
+        assert (tr.randomize()) else $error("Nai thayu kai");
+        //mbx.put(tr);
+        mbx.put(tr.copy());
+        tr.display("GEN");
+      end
+    ->done;
+  endtask
+endclass
+///////////////////////
+//Looking for each and every operation how they are performed
+class driver;
+  
+  virtual apb_if vif;
+  transaction tr;
+  generator gr;
+  mailbox #(transaction) mbx;
+  event nextdrv;
+  
+  function new(mailbox#(transaction) mbx);
+    this.mbx=mbx;
+  endfunction
+  
+  task reset();
+    vif.presetn <= 1'b0;
+    vif.psel    <= 1'b0;
+    vif.pwdata	<= 0;
+    vif.paddr 	<= 0;
+    vif.pwrite	<=1'b0;
+    repeat(5) @(posedge vif.pclk);
+    vif.presetn <= 1'b0;
+    repeat(5) @(posedge vif.pclk);
+    $display("[DRV]:Reset Done");
+  endtask
+  
+  task run();
+    forever begin
+      
+      mbx.get(tr);
+      
+      if(tr.opr == 0) ///Performing writing operation
+        begin
+          @(posedge vif.pclk);
+          //now at the very first clock edge transferring data but keeping penable low
+          vif.psel <= 1'b1;
+          vif.pwrite <= 1'b1;
+          vif.paddr <= tr.paddr;
+          vif.pwdata <=tr.pwdata;
+          vif.penable <= 1'b0;
+          vif.pwrite <= 1'b1;
+          //Till now we were in setup state but now to go to acceess state
+          //we have to make penabe ONE and pready one//
+          //PLEASE CHECK WAVEFORM
+          @(posedge vif.pclk);
+          vif.penable <= 1'b1;
+          vif.pready  <= 1'b1;
+          ///Transaction complete now going back to idle State
+          repeat(2) @(posedge vif.pclk);
+          vif.psel<= 1'b0;
+          vif.penable <= 1'b0;
+          vif.pwrite <=1'b0;
+          $display("[DRv WRITE]: Write Operation paddr:%0d pwdata:%0d",tr.paddr,tr.pwdata);
+          end
+      
+      else if(tr.opr==1) // Performing Read Operation
+        begin
+          @(posedge vif.pclk);
+          vif.psel <= 1'b1;
+          vif.pwrite <= 1'b0;
+          vif.paddr <= tr.paddr;
+          vif.pwdata <=tr.pwdata;
+          vif.penable <= 1'b0;
+          @(posedge vif.pclk);
+          vif.penable <= 1'b1;
+          vif.pready  <= 1'b1;          
+          ///Transaction complete now going back to idle State
+          repeat(2) @(posedge vif.pclk);
+          vif.psel<= 1'b0;
+          vif.penable <= 1'b0;
+          vif.pwrite <=1'b0;
+          $display("[DRV READ]: Read Operation paddr:%0d pwdata:%0d",tr.paddr,tr.pwdata);
+        end
+      
+      else if (tr.opr == 2) ///Performing Random operation
+        begin
+          @(posedge vif.pclk); // The random stimuli we generated we will be pasing directly to DUT
+          //vif.psel <= 1'b1;
+          vif.psel    <= tr.psel;
+          vif.penable <= tr.penable;
+          vif.paddr   <= tr.paddr;
+          vif.pwdata  <= tr.pwdata;
+          @(posedge vif.pclk);
+          vif.penable <= 1'b1;
+          ///Transaction complete now going back to idle State
+          repeat(2) @(posedge vif.pclk);
+          vif.psel<= 1'b0;
+          vif.penable <= 1'b0;
+          vif.pwrite <=1'b0;
+          $display("[DRV Random]: Random Operation paddr:%0d pwdata:%0d",tr.paddr,tr.pwdata);
+        end
+      
+      else if (tr.opr == 3)  //Injecting error in this design
+        begin
+          $display("[Not Working]");
+        end
+      
+      ->nextdrv;
+    end
+  endtask
+endclass
+
+////////////////////////////
+module test_bench;
+  
+  generator gr;
+  transaction tr;
+  driver drv;
+  mailbox #(transaction) mbx;
+  event next;
+ 
+  apb_if vif();
+  
+  apb_top dut (vif.presetn, vif.pclk, vif.psel, vif.penable, vif.pwrite, vif.paddr, vif.pwdata, vif.prdata, vif.pready,vif.pslverr);
+  /*
+  apb_top dut (
+    .presetn(vif.presetn),
+    .pclk(vif.pclk),
+    .psel(vif.psel),
+    .penable(vif.penable),
+    .pwrite(vif.pwrite),
+    .paddr(vif.paddr),
+    .pwdata(vif.pwdata),
+    .prdata(vif.prdata),
+    .pready(vif.pready),
+    .pslverr(vif.pslverr),
+    .pslv(vif.pslv),
+    .pstrb(vif.pstrb)
+  );
+  */
+  initial begin
+    vif.pclk<=0;
+  end
+  
+  always #10 vif.pclk= ~vif.pclk;
+  
+  initial begin
+    
+    mbx=new();
+    gr=new(mbx);
+    gr.count=20;
+    drv=new(mbx);
+    drv.vif=vif;
+    
+    gr.nextdrv=next;
+    drv.nextdrv=next;
+    
+    fork
+      gr.run();
+      drv.run();
+    join_none
+    wait(gr.done.triggered);
+    #1000;
+    $finish();
+  end
+ 
+  
+  initial begin
+    $dumpfile("dump.vcd");
+    $dumpvars;
+  end 
+  
+endmodule
