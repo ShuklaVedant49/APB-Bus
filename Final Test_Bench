@@ -1,5 +1,5 @@
-  ////////////////////////////
-interface apb_if;
+////////////////////////////
+interface abp_if;
   
     logic pclk;
     logic psel;
@@ -93,7 +93,7 @@ endclass
 //Looking for each and every operation how they are performed
 class driver;
   
-  virtual apb_if vif;
+  virtual abp_if vif;
   transaction tr;
   generator gr;
   mailbox #(transaction) mbx;
@@ -204,7 +204,7 @@ class monitor;
   
   // Instantiating the Interface using virtual interface 
   //calling out all the posrts availabe for the read and write operation
-  virtual apb_if vif;
+  virtual abp_if vif;
   mailbox #(transaction) mbx;
   
   function new(mailbox #(transaction) mbx);
@@ -215,7 +215,7 @@ class monitor;
     tr=new();
     forever begin
       @(posedge vif.pclk);
-      if (vif.psel && !vif.enable)
+      if (vif.psel && !vif.penable)
         begin
           @(posedge vif.pclk);
           ///Starting to pass write operation
@@ -229,7 +229,7 @@ class monitor;
             end
           //Writing operation ends
           ///Starting writing operation
-          else if (vif.psel && vif.pread && vif.penable)
+          else if (vif.psel && vif.prdata && vif.penable)
             begin
               @(posedge vif.pclk);
               tr.pwdata = vif.pwdata;
@@ -314,10 +314,10 @@ class environment;
   mailbox #(transaction) msmbx;
   
   //Instantiate interface
-  virtual apb_if vif;
+  virtual abp_if vif;
   
   
-  function new(virtual apb_if vif);
+  function new(virtual abp_if vif);
     
     gdmbx = new();
     gr= new(gdmbx);
@@ -384,7 +384,7 @@ module test_bench;
     
     initial begin
       env = new(vif);
-      env.gr.count = 30;
+      env.gr.count = 20;
       env.run();
     end
       
@@ -392,6 +392,7 @@ module test_bench;
     initial begin
       $dumpfile("dump.vcd");
       $dumpvars;
+      #400;
     end
     
 endmodule
